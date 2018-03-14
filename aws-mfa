@@ -1,0 +1,59 @@
+#! /bin/bash
+
+function usage() {
+   echo "Usage: aws_mfa [account_id] [iam_user] [profile] mfa_code"
+   echo
+   echo "Generates a temporary STS token for accessing AWS accounts using AWS CLI tools"
+   echo
+}
+
+function get-sts-token() {
+   AWS_ACCOUNT_ID=$1
+   AWS_IAM_USER=$2
+   AWS_PROFILE=$3
+   MFA_CODE=$4
+
+   if [[ -z $AWS_ACCOUNT_ID ]] || [[ -z $AWS_IAM_USER ]] || [[ -z $AWS_PROFILE ]] || [[ -z $MFA_CODE ]]
+   then
+      usage
+      exit 1
+   fi
+
+   echo "aws --profile bootstrap-${AWS_PROFILE} sts get-session-token --serial-number arn:aws:iam::$AWS_ACCOUNT_ID:mfa/$AWS_IAM_USER --output json --token-code $MFA_CODE"
+
+   output=$(aws --profile bootstrap-${AWS_PROFILE} sts get-session-token --serial-number arn:aws:iam::$AWS_ACCOUNT_ID:mfa/$AWS_IAM_USER --output json --token-code $MFA_CODE)
+
+   aws_access_key_id=$(echo $output | jq -r --exit-status '.Credentials.AccessKeyId')
+   aws_secret_access_key=$(echo $output | jq -r --exit-status '.Credentials.SecretAccessKey')
+   aws_session_token=$(echo $output | jq -r --exit-status '.Credentials.SessionToken')
+
+   aws configure set profile.$AWS_PROFILE.aws_access_key_id $aws_access_key_id
+   aws configure set profile.$AWS_PROFILE.aws_secret_access_key $aws_secret_access_key
+   aws configure set profile.$AWS_PROFILE.aws_session_token $aws_session_token
+
+   echo "Created a temporary STS token for profile '$AWS_PROFILE'."
+}
+
+function get-sts-token-from-profile() {
+   PROFILE=$1
+   MFA_CODE=$2
+
+   source "$HOME/.aws/$PROFILE-config"
+
+   get-sts-token $AWS_ACCOUNT_ID $AWS_IAM_USER $PROFILE $MFA_CODE
+}
+
+hash jq 2>/dev/null || { echo >&2 "This script requires jq (https://stedolan.github.io/jq/) but it's not installed. Aborting."; exit 1; }
+
+if [[ "$#" -eq 1 ]]
+then
+   get-sts-token-from-profile "default" "$@"
+elif [[ "$#" -eq 2 ]]
+then
+   get-sts-token-from-profile "$@"
+elif [[ "$#" -eq 4 ]]
+then
+   get-sts-token "$@"
+else
+   usage
+fi
